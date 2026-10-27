@@ -11,7 +11,13 @@ import android.os.BatteryManager;
 import android.util.TypedValue;
 import android.widget.RemoteViews;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+
 public class BatteryWidget extends AppWidgetProvider {
+
+    // true = при зарядке показывает сырые значения датчиков для диагностики
+    private static final boolean DEBUG = true;
 
     private static String last = "";
 
@@ -72,8 +78,8 @@ public class BatteryWidget extends AppWidgetProvider {
         String text;
         float size;
         if (charging) {
-            text = chargeText(c, pct);
-            size = 16;
+            text = DEBUG ? debugText(c) : chargeText(c, pct);
+            size = DEBUG ? 12 : 16;
         } else {
             text = pct + "%";
             size = 30;
@@ -120,5 +126,26 @@ public class BatteryWidget extends AppWidgetProvider {
         if (min > 1440) return "—";
         int h = min / 60, m = min % 60;
         return h > 0 ? h + "ч " + m + "м" : m + "м";
+    }
+
+    /** N = CURRENT_NOW, A = CURRENT_AVERAGE, S = /sys/.../current_now. Сырые значения со знаком. */
+    private static String debugText(Context c) {
+        BatteryManager bm = (BatteryManager) c.getSystemService(Context.BATTERY_SERVICE);
+        long n = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+        long a = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE);
+        return "N " + show(n) + "\nA " + show(a) + "\nS " + show(readSys());
+    }
+
+    private static String show(long v) {
+        return v == Long.MIN_VALUE ? "—" : String.valueOf(v);
+    }
+
+    private static long readSys() {
+        try (BufferedReader r = new BufferedReader(
+                new FileReader("/sys/class/power_supply/battery/current_now"))) {
+            return Long.parseLong(r.readLine().trim());
+        } catch (Exception e) {
+            return Long.MIN_VALUE;
+        }
     }
 }
