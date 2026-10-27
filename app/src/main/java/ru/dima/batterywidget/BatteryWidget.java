@@ -1,5 +1,6 @@
 package ru.dima.batterywidget;
 
+import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.ComponentName;
@@ -8,6 +9,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
 import android.os.BatteryManager;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.TypedValue;
 import android.widget.RemoteViews;
 
@@ -17,9 +20,16 @@ import java.io.FileReader;
 public class BatteryWidget extends AppWidgetProvider {
 
     // true = при зарядке показывает сырые значения датчиков для диагностики
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
+
+    private static final String ACTION_REFRESH = "ru.dima.batterywidget.REFRESH";
+
+    /** Сколько после подключения зарядки показывать молнию, пока ток разгоняется. */
+    private static final long SETTLE_MS = 10000;
 
     private static String last = "";
+    private static boolean wasCharging = false;
+    private static long chargeSince = 0;
 
     @Override
     public void onEnabled(Context c) {
@@ -41,6 +51,9 @@ public class BatteryWidget extends AppWidgetProvider {
     public void onReceive(Context c, Intent i) {
         super.onReceive(c, i);
         String a = i.getAction();
+        if (ACTION_REFRESH.equals(a)) {
+            render(c, c.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED)), true);
+        }
         if (Intent.ACTION_BOOT_COMPLETED.equals(a) || Intent.ACTION_MY_PACKAGE_REPLACED.equals(a)) {
             int[] ids = AppWidgetManager.getInstance(c)
                     .getAppWidgetIds(new ComponentName(c, BatteryWidget.class));
@@ -55,14 +68,35 @@ public class BatteryWidget extends AppWidgetProvider {
         }
     }
 
+    /** Сколько ещё мс показывать молнию (0 = уже не нужно). */
+    static long settleLeft() {
+        if (!wasCharging) return 0;
+        long left = SETTLE_MS - (SystemClock.elapsedRealtime() - chargeSince);
+        return left > 0 ? left : 0;
+    }
+
+    /**
+     * force = true: обновить принципиально (тап, добавление виджета, включение экрана) -
+     * без пропуска при выключенном экране, без дедупликации и без молнии.
+     */
     static void render(Context c, Intent b, boolean force) {
         if (b == null) return;
+
+        // экран выключен - ничего не рисуем, при включении сервис обновит всё сам
+        if (!force && !((PowerManager) c.getSystemService(Context.POWER_SERVICE)).isInteractive()) {
+            return;
+        }
 
         int level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, 0);
         int scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
         int pct = scale > 0 ? level * 100 / scale : level;
         boolean charging = b.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
                 == BatteryManager.BATTERY_STATUS_CHARGING;
+
+        long now = SystemClock.elapsedRealtime();
+        if (charging && !wasCharging) chargeSince = now;
+        wasCharging = charging;
+        boolean settling = charging && !force && now - chargeSince < SETTLE_MS;
 
         int bg;
         int fg = Color.WHITE;
@@ -77,7 +111,10 @@ public class BatteryWidget extends AppWidgetProvider {
 
         String text;
         float size;
-        if (charging) {
+        if (settling) {
+            text = "⚡";
+            size = 40;
+        } else if (charging) {
             text = DEBUG ? debugText(c) : chargeText(c, pct);
             size = DEBUG ? 12 : 16;
         } else {
@@ -94,6 +131,10 @@ public class BatteryWidget extends AppWidgetProvider {
         rv.setTextViewText(R.id.txt, text);
         rv.setTextColor(R.id.txt, fg);
         rv.setTextViewTextSize(R.id.txt, TypedValue.COMPLEX_UNIT_SP, size);
+        // тап по виджету = принудительное обновление (заново читает датчик тока)
+        Intent tap = new Intent(c, BatteryWidget.class).setAction(ACTION_REFRESH);
+        rv.setOnClickPendingIntent(R.id.root,
+                PendingIntent.getBroadcast(c, 0, tap, PendingIntent.FLAG_UPDATE_CURRENT));
         AppWidgetManager.getInstance(c)
                 .updateAppWidget(new ComponentName(c, BatteryWidget.class), rv);
     }
