@@ -25,7 +25,7 @@ public class BatteryWidget extends AppWidgetProvider {
     private static final String ACTION_REFRESH = "ru.dima.batterywidget.REFRESH";
 
     /** Сколько после подключения зарядки показывать молнию, пока ток разгоняется. */
-    private static final long SETTLE_MS = 10000;
+    private static final long SETTLE_MS = 2000;
 
     private static String last = "";
     private static boolean wasCharging = false;
